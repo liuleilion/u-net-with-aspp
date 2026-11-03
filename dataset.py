@@ -6,6 +6,16 @@ from PIL import Image
 import numpy as np
 from torchvision import transforms
 import nibabel as nib
+import sys
+
+
+def encode_mask(gt):
+    gt = np.array(gt)
+    return np.stack([
+        (gt == 255),   # LV  (ACDC label 3)
+        (gt == 85),    # RV  (ACDC label 1)
+        (gt == 170),   # Myo (ACDC label 2)
+    ], axis=0).astype(np.float32)
 
 
 class MyDataset(Dataset):
@@ -15,6 +25,7 @@ class MyDataset(Dataset):
         self.transform = transforms.Compose([transforms.ToTensor()])
         self.img_list = os.listdir(img_dir)
 
+        print(f"img_files size={len(self.img_list)}, mask_files size={len(self.img_list)}", file=sys.stderr)
 
     def __len__(self):
         return len(self.img_list)
@@ -26,12 +37,7 @@ class MyDataset(Dataset):
         image = Image.open(img_path).convert("L")
         gt = Image.open(gt_path).convert("L")
 
-        gt = np.array(gt)
-        gt_lv = (gt == 1).astype(np.float32)
-        gt_rv = (gt == 2).astype(np.float32)
-        gt_myo = (gt == 3).astype(np.float32)
-        gt = np.stack([gt_lv, gt_rv, gt_myo], axis=0)
-
+        gt = encode_mask(gt)
 
         image = self.transform(image)
 

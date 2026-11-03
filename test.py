@@ -1,6 +1,6 @@
 from dataset import *
 from torchvision import transforms
-import torch.nn.functional as F
+from model.UNet import UNet
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -16,8 +16,13 @@ def dice_coefficient(pred, target, eps=1e-6):
 def test():
     image_path = './data/test/Img/patient001_01_1.png'
     gt_path  = './data/test/GT/patient001_01_1.png'
-    model = torch.load('UNet.pth')
+    
+    model = UNet(in_channels=1, out_channels=3)
+    model.load_state_dict(torch.load('unet-best.pth', map_location=device))
+    model.to(device)
+
     model.eval()
+    
     with torch.no_grad():
         image = Image.open(image_path).convert("L")
         gt = Image.open(gt_path).convert("L")
@@ -25,30 +30,19 @@ def test():
         transform = transforms.Compose([transforms.ToTensor()])
         image = transform(image).unsqueeze(0).to(device)
 
-        gt = np.array(gt)
-        gt_lv = (gt == 1).astype(np.float32)
-        gt_rv = (gt == 2).astype(np.float32)
-        gt_myo = (gt == 3).astype(np.float32)
-        gt = np.stack([gt_lv, gt_rv, gt_myo], axis=0)
+        gt = encode_mask(gt)
         gt = torch.tensor(gt).unsqueeze(0).to(device)
 
-        # 模型推理
+        # 模型推理（3 通道独立 sigmoid，背景=三通道全 0）
         output = model(image)
-        prob = F.softmax(output, dim=1)
-        pred_class = torch.argmax(prob, dim=1)
+        pred = torch.sigmoid(output)[0] > 0.5  # [3,H,W]
 
-        # segment 结果保存
-        pred = pred_class[0]  # H,W
-        h, w = pred.shape
+        # segment 结果保存：LV→R, RV→G, Myo→B
+        h, w = pred.shape[1], pred.shape[2]
         segcolor = torch.zeros(h, w, 3, device=pred.device)
-
-        # 类别1 → R通道
-        mask_1 = (pred == 1).float()
-        segcolor[:, :, 0] = mask_1
-
-        # 类别2 → G通道
-        mask_2 = (pred == 2).float()
-        segcolor[:, :, 1] = mask_2
+        segcolor[:, :, 0] = pred[0].float()
+        segcolor[:, :, 1] = pred[1].float()
+        segcolor[:, :, 2] = pred[2].float()
 
         image_seg = Image.fromarray(np.array(segcolor.detach().cpu() * 255, dtype=np.uint8))
 
@@ -58,16 +52,18 @@ def test():
         # 计算Dice系数
         preds = torch.sigmoid(output) > 0.5
         dice_score = dice_coefficient(preds, gt)
-        print(f'该图片的Dice Coefficient {image_path}: {dice_score}')
+        print(f'Dice Coefficient {image_path}: {dice_score}')
 
 
 
 def eval(): #在整个测试集上评估模型
-    model = torch.load('UNet.pth')
+    model = UNet(in_channels=1, out_channels=3)
+    model.load_state_dict(torch.load('unet-best.pth', map_location=device))
+    model.to(device)
     model.eval()
     dice_scores = []
     test_dataset = MyDataset('./data/test/Img', './data/test/GT')
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=16, shuffle=True)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=16, shuffle=False)
     with torch.no_grad():
         for images, gts in test_loader:
             images = images.to(device)
@@ -76,7 +72,7 @@ def eval(): #在整个测试集上评估模型
             preds = torch.sigmoid(outputs) > 0.5
             dice_scores.append(dice_coefficient(preds, gts))
     avg_dice = np.mean(dice_scores)
-    print(f'测试集上的Average Dice Coefficient为: {avg_dice}')
+    print(f'Average Dice Coefficient为: {avg_dice}')
 
 
 if __name__ == '__main__':

@@ -2,45 +2,65 @@ from __future__ import division
 import torch
 import numpy as np
 from torch.utils import data
-from model.myloss import  compute_weighted_loss
-
+from model.myloss import dice_loss
+import sys
 
 class Trainer(object):
     def __init__(self, model, TrainDataset, args):
         self.args = args
+
         self.model = model
-        if torch.cuda.is_available():
-            self.model.cuda()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.Trainloader = data.DataLoader(dataset=TrainDataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
+        self.model.to(self.device)
+
+        self.Trainloader = data.DataLoader(dataset=TrainDataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+
         self.criterion = torch.nn.BCEWithLogitsLoss()
         self.optimizer = torch.optim.Adam(lr=1e-3, params=model.parameters())
+
         self.epochs = args.epochs
         self.start_epoch = args.start_epoch
 
 
     def train_model(self):
+        
+        # 保留最优的epoch数据
+        best_loss = float('inf')
+
         self.model.train()
-        for epoch in range(self.start_epoch,1 ):#self.epochs
+
+        for epoch in range(self.start_epoch, self.epochs):
+            
             epoch_loss = 0
+            
             for i, (images, gts) in enumerate(self.Trainloader):
+                
                 images = images.to(self.device)
                 gts = gts.to(self.device)
+
                 self.optimizer.zero_grad()
+
                 outputs = self.model(images)
-                loss = self.criterion(outputs, gts)
 
-                # 处理gts：去掉通道维，再转long
-                loss2 = compute_weighted_loss(outputs, gts)
+                loss1 = self.criterion(outputs, gts)
+                loss2 = dice_loss(outputs, gts)
+                loss = loss1 + loss2
 
-                loss = loss+loss2
                 loss.backward()
+
                 self.optimizer.step()
+
                 epoch_loss += loss.item()
 
-                if i % 3==0:
-                    print(loss.item())
-            print(f'Epoch {epoch + 1}/{(self.epochs-self.start_epoch)}, 损失函数的平均值为: {epoch_loss / len(self.Trainloader)}')
+                print(f'epoch-{epoch}-{i}---loss:{loss:.4f}---loss1:{loss1:.4f}---loss2:{loss2:.4f}', file=sys.stderr)
 
-            if epoch%3 == 0:
-                 torch.save(self.model, 'UNet.pth')
+            avg_loss = epoch_loss / len(self.Trainloader)
+            print(f'Epoch {epoch}, average-loss: {avg_loss}')
+
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+                torch.save(self.model.state_dict(), 'unet-best.pth')
+                print(f'saved best model at epoch{epoch} with loss:{best_loss}', file=sys.stderr)
+
+            if epoch%5 == 0:
+                torch.save(self.model.state_dict(), f'unet-epoch-{epoch}.pth')
