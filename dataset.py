@@ -1,44 +1,54 @@
-import glob
-import torch
-from torch.utils.data import Dataset, random_split, DataLoader
 import os
-from PIL import Image
-import numpy as np
-from torchvision import transforms
-import nibabel as nib
+import random
 import sys
+
+import numpy as np
+import torch
+from PIL import Image
+from torch.utils.data import Dataset
+from torchvision import transforms
+from torchvision.transforms import functional as TF
 
 
 def encode_mask(gt):
     gt = np.array(gt)
-    return np.stack([
-        (gt == 255),   # LV  (ACDC label 3)
-        (gt == 85),    # RV  (ACDC label 1)
-        (gt == 170),   # Myo (ACDC label 2)
-    ], axis=0).astype(np.float32)
+    return (gt > 127).astype(np.float32)[None, ...]
 
 
 class MyDataset(Dataset):
-    def __init__(self, img_dir, gt_dir):
+    def __init__(self, img_dir, gt_dir, img_size=256, augment=False):
         self.img_dir = img_dir
         self.gt_dir = gt_dir
-        self.transform = transforms.Compose([transforms.ToTensor()])
-        self.img_list = os.listdir(img_dir)
+        self.img_size = img_size
+        self.augment = augment
+        self.img_list = sorted(os.listdir(img_dir))
 
         print(f"img_files size={len(self.img_list)}, mask_files size={len(self.img_list)}", file=sys.stderr)
 
     def __len__(self):
         return len(self.img_list)
 
+    def _load_pair(self, idx):
+        name = self.img_list[idx]
+        image = Image.open(os.path.join(self.img_dir, name)).convert("RGB")
+        gt = Image.open(os.path.join(self.gt_dir, name)).convert("L")
+
+        image = TF.resize(image, [self.img_size, self.img_size])
+        gt = TF.resize(gt, [self.img_size, self.img_size], interpolation=Image.NEAREST)
+        return image, gt
+
     def __getitem__(self, idx):
-        img_path = os.path.join(self.img_dir, self.img_list[idx])
-        gt_path = os.path.join(self.gt_dir, self.img_list[idx])
+        image, gt = self._load_pair(idx)
 
-        image = Image.open(img_path).convert("L")
-        gt = Image.open(gt_path).convert("L")
+        if self.augment:
+            if random.random() < 0.5:
+                image, gt = TF.hflip(image), TF.hflip(gt)
+            if random.random() < 0.5:
+                image, gt = TF.vflip(image), TF.vflip(gt)
+            angle = random.uniform(-20, 20)
+            image, gt = TF.rotate(image, angle), TF.rotate(gt, angle)
 
-        gt = encode_mask(gt)
-
-        image = self.transform(image)
+        image = transforms.ToTensor()(image)
+        gt = torch.from_numpy(encode_mask(gt))
 
         return image, gt

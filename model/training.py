@@ -13,10 +13,14 @@ class Trainer(object):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
 
-        self.Trainloader = data.DataLoader(dataset=TrainDataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+        num_workers = getattr(args, 'num_workers', 0)
+        self.Trainloader = data.DataLoader(dataset=TrainDataset, batch_size=args.batch_size, shuffle=True, num_workers=num_workers)
 
-        self.criterion = torch.nn.BCEWithLogitsLoss()
-        self.optimizer = torch.optim.Adam(lr=1e-3, params=model.parameters())
+        pos_weight = getattr(args, 'pos_weight', None)
+        if pos_weight:
+            pos_weight = torch.tensor([pos_weight], device=self.device)
+        self.criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        self.optimizer = torch.optim.Adam(lr=getattr(args, 'lr', 1e-3), params=model.parameters())
 
         self.epochs = args.epochs
         self.start_epoch = args.start_epoch

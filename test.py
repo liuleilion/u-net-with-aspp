@@ -1,7 +1,18 @@
-from dataset import *
+import os
+
+import numpy as np
+import torch
+from PIL import Image
+from torch.utils.data import DataLoader
 from torchvision import transforms
+
+from dataset import MyDataset, encode_mask
 from model.UNet import UNet
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DATA_ROOT = './data'
+IMG_SIZE = 256
+WEIGHTS = 'unet-best.pth'
 
 
 def dice_coefficient(pred, target, eps=1e-6):
@@ -13,66 +24,75 @@ def dice_coefficient(pred, target, eps=1e-6):
     return dice.mean(dim=1).mean().item()
 
 
+def iou_coefficient(pred, target, eps=1e-6):
+    pred = pred.view(pred.size(0), pred.size(1), -1)
+    target = target.view(target.size(0), target.size(1), -1)
+    intersection = (pred * target).sum(dim=2)
+    union = pred.sum(dim=2) + target.sum(dim=2) - intersection
+    return ((intersection + eps) / (union + eps)).mean().item()
+
+
+def load_model(weights=WEIGHTS):
+    model = UNet(in_channels=3, out_channels=1)
+    model.load_state_dict(torch.load(weights, map_location=device))
+    return model.to(device).eval()
+
+
+def _prepare(image, gt):
+    image = transforms.Resize((IMG_SIZE, IMG_SIZE))(image)
+    gt = transforms.Resize((IMG_SIZE, IMG_SIZE), interpolation=Image.NEAREST)(gt)
+    return image, gt
+
+
 def test():
-    image_path = './data/test/Img/patient001_01_1.png'
-    gt_path  = './data/test/GT/patient001_01_1.png'
-    
-    model = UNet(in_channels=1, out_channels=3)
-    model.load_state_dict(torch.load('unet-best.pth', map_location=device))
-    model.to(device)
+    img_dir = os.path.join(DATA_ROOT, 'test', 'Img')
+    gt_dir = os.path.join(DATA_ROOT, 'test', 'GT')
+    name = sorted(os.listdir(img_dir))[0]
+    image_path = os.path.join(img_dir, name)
+    gt_path = os.path.join(gt_dir, name)
 
-    model.eval()
-    
+    model = load_model()
+
     with torch.no_grad():
-        image = Image.open(image_path).convert("L")
+        image = Image.open(image_path).convert("RGB")
         gt = Image.open(gt_path).convert("L")
+        image, gt = _prepare(image, gt)
 
-        transform = transforms.Compose([transforms.ToTensor()])
-        image = transform(image).unsqueeze(0).to(device)
+        x = transforms.ToTensor()(image).unsqueeze(0).to(device)
+        y = torch.from_numpy(encode_mask(gt)).unsqueeze(0).to(device)
 
-        gt = encode_mask(gt)
-        gt = torch.tensor(gt).unsqueeze(0).to(device)
+        prob = torch.sigmoid(model(x))[0, 0]
+        pred = (prob > 0.5).cpu().numpy().astype(bool)
 
-        # 模型推理（3 通道独立 sigmoid，背景=三通道全 0）
-        output = model(image)
-        pred = torch.sigmoid(output)[0] > 0.5  # [3,H,W]
+        rgb = np.array(image)
+        overlay = rgb.copy()
+        overlay[pred] = (0.45 * rgb[pred] + 0.55 * np.array([255, 40, 40])).astype(np.uint8)
 
-        # segment 结果保存：LV→R, RV→G, Myo→B
-        h, w = pred.shape[1], pred.shape[2]
-        segcolor = torch.zeros(h, w, 3, device=pred.device)
-        segcolor[:, :, 0] = pred[0].float()
-        segcolor[:, :, 1] = pred[1].float()
-        segcolor[:, :, 2] = pred[2].float()
+        Image.fromarray(overlay).save('result.jpg')
+        Image.fromarray((pred * 255).astype(np.uint8)).save('result_mask.png')
 
-        image_seg = Image.fromarray(np.array(segcolor.detach().cpu() * 255, dtype=np.uint8))
-
-        image_seg.save('result.jpg')
+        dice_score = dice_coefficient((prob > 0.5)[None, None].float(), y.float())
+        print(f'Dice Coefficient {name}: {dice_score:.4f}')
 
 
-        # 计算Dice系数
-        preds = torch.sigmoid(output) > 0.5
-        dice_score = dice_coefficient(preds, gt)
-        print(f'Dice Coefficient {image_path}: {dice_score}')
+def eval():
+    model = load_model()
+    test_dataset = MyDataset(os.path.join(DATA_ROOT, 'test', 'Img'),
+                             os.path.join(DATA_ROOT, 'test', 'GT'),
+                             img_size=IMG_SIZE)
+    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
-
-
-def eval(): #在整个测试集上评估模型
-    model = UNet(in_channels=1, out_channels=3)
-    model.load_state_dict(torch.load('unet-best.pth', map_location=device))
-    model.to(device)
-    model.eval()
-    dice_scores = []
-    test_dataset = MyDataset('./data/test/Img', './data/test/GT')
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=16, shuffle=False)
+    dice_scores, iou_scores = [], []
     with torch.no_grad():
         for images, gts in test_loader:
             images = images.to(device)
             gts = gts.to(device)
-            outputs = model(images)
-            preds = torch.sigmoid(outputs) > 0.5
+            preds = (torch.sigmoid(model(images)) > 0.5).float()
             dice_scores.append(dice_coefficient(preds, gts))
-    avg_dice = np.mean(dice_scores)
-    print(f'Average Dice Coefficient为: {avg_dice}')
+            iou_scores.append(iou_coefficient(preds, gts))
+
+    print(f'Average Dice: {np.mean(dice_scores):.4f}')
+    print(f'Average IoU : {np.mean(iou_scores):.4f}')
 
 
 if __name__ == '__main__':

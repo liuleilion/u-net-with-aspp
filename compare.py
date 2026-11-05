@@ -17,12 +17,11 @@ def natural_key(name):
 
 
 def find_models(args):
-    """返回待加载的权重列表。指定 --model-step 时，取 unet-best + 每 step 个 epoch 的权重。"""
     if args.model_step is None:
         return [args.weights]
 
     if args.model_step <= 0:
-        raise ValueError('--model-step 必须为正整数')
+        raise ValueError('--model-step must be a positive integer')
 
     models = []
     pattern = os.path.join(args.model_dir, 'unet-epoch-*.pth')
@@ -51,10 +50,10 @@ def find_models(args):
 def colorize(mask):
     m = mask.detach().cpu().numpy() if isinstance(mask, torch.Tensor) else np.asarray(mask)
     m = (m > 0.5).astype(np.uint8)
-    out = np.zeros((m.shape[1], m.shape[2], 3), dtype=np.uint8)
-    out[..., 0] = m[0] * 255  # LV  -> R
-    out[..., 1] = m[1] * 255  # RV  -> G
-    out[..., 2] = m[2] * 255  # Myo -> B
+    if m.ndim == 3:
+        m = m[0]
+    out = np.zeros((m.shape[0], m.shape[1], 3), dtype=np.uint8)
+    out[..., 0] = m * 255
     return Image.fromarray(out)
 
 
@@ -74,7 +73,6 @@ def get_font(size=14):
 
 
 def build_canvas(rows, model_names, title, out_path):
-    """rows: [(name, image_rgb, gt_img, [(pred_img, dice), ...]), ...]"""
     widths, heights = [], []
     for _, image, gt_img, preds in rows:
         widths += [image.width, gt_img.width]
@@ -129,13 +127,14 @@ def main():
     ap = argparse.ArgumentParser(description="Visualize image / GT mask / predictions on one grid.")
     ap.add_argument('--img-dir', default='./data/test/Img')
     ap.add_argument('--gt-dir', default='./data/test/GT')
-    ap.add_argument('--weights', default='unet-best.pth', help='默认加载的权重（--model-step 时作为必含项）')
-    ap.add_argument('--model-dir', default='.', help='unet-epoch-*.pth 所在目录')
+    ap.add_argument('--img-size', type=int, default=256)
+    ap.add_argument('--weights', default='unet-best.pth')
+    ap.add_argument('--model-dir', default='.')
     ap.add_argument('--model-step', type=int, default=None,
-                    help='模型 epoch 采样间隔，如 10 => unet-epoch-0/10/20... + unet-best')
-    ap.add_argument('--step', type=int, default=10, help='图像采样间隔：每隔 step 张取一张')
-    ap.add_argument('--start', type=int, default=0, help='从第几张开始采样')
-    ap.add_argument('--max-samples', type=int, default=40, help='最多展示多少个样本')
+                    help='sample every N epochs, e.g. 10 => unet-epoch-0/10/20... + unet-best')
+    ap.add_argument('--step', type=int, default=10)
+    ap.add_argument('--start', type=int, default=0)
+    ap.add_argument('--max-samples', type=int, default=40)
     ap.add_argument('--threshold', type=float, default=0.5)
     ap.add_argument('--out', default='compare.jpg')
     ap.add_argument('--device', default=None)
@@ -152,8 +151,10 @@ def main():
     transform = transforms.Compose([transforms.ToTensor()])
     samples = []
     for name in selected:
-        image = Image.open(os.path.join(args.img_dir, name)).convert('L')
+        image = Image.open(os.path.join(args.img_dir, name)).convert('RGB')
         gt = Image.open(os.path.join(args.gt_dir, name)).convert('L')
+        image = transforms.Resize((args.img_size, args.img_size))(image)
+        gt = transforms.Resize((args.img_size, args.img_size), interpolation=Image.NEAREST)(gt)
         samples.append((name, image, torch.tensor(encode_mask(gt))))
 
     model_paths = find_models(args)
@@ -162,7 +163,7 @@ def main():
 
     preds_by_model = []
     for model_path, model_name in zip(model_paths, model_names):
-        model = UNet(in_channels=1, out_channels=3)
+        model = UNet(in_channels=3, out_channels=1)
         model.load_state_dict(torch.load(model_path, map_location=device))
         model.to(device).eval()
 
