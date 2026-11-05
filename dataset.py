@@ -16,7 +16,7 @@ def encode_mask(gt):
 
 
 class MyDataset(Dataset):
-    def __init__(self, img_dir, gt_dir, img_size=256, augment=False):
+    def __init__(self, img_dir, gt_dir, img_size=512, augment=False):
         self.img_dir = img_dir
         self.gt_dir = gt_dir
         self.img_size = img_size

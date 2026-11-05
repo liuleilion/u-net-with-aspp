@@ -127,7 +127,7 @@ def main():
     ap = argparse.ArgumentParser(description="Visualize image / GT mask / predictions on one grid.")
     ap.add_argument('--img-dir', default='./data/test/Img')
     ap.add_argument('--gt-dir', default='./data/test/GT')
-    ap.add_argument('--img-size', type=int, default=256)
+    ap.add_argument('--img-size', type=int, default=512)
     ap.add_argument('--weights', default='unet-best.pth')
     ap.add_argument('--model-dir', default='.')
     ap.add_argument('--model-step', type=int, default=None,

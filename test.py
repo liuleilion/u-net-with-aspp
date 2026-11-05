@@ -11,7 +11,7 @@ from model.UNet import UNet
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DATA_ROOT = './data'
-IMG_SIZE = 256
+IMG_SIZE = 512
 WEIGHTS = 'unet-best.pth'
 
 

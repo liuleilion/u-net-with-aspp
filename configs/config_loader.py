@@ -1,5 +1,5 @@
 import configargparse
-
+import sys
 
 def config_parser():
     parser = configargparse.ArgumentParser(description='Parathdetect')
@@ -16,7 +16,7 @@ def config_parser():
     parser.add_argument('--data_root', type=str, default='./data',
                         help='dataset root containing train/test with Img and GT')
 
-    parser.add_argument('--img_size', type=int, default=256,
+    parser.add_argument('--img_size', type=int, default=512,
                         help='image and mask resize')
 
     parser.add_argument('--lr', type=float, default=1e-3,
@@ -34,4 +34,5 @@ def config_parser():
 def get_config():
     parser = config_parser()
     cfg = parser.parse_args()
+    print(f"{cfg}", file=sys.stderr)
     return cfg

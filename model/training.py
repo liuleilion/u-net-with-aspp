@@ -2,7 +2,7 @@ from __future__ import division
 import torch
 import numpy as np
 from torch.utils import data
-from model.myloss import dice_loss
+from model.myloss import total_loss
 import sys
 
 class Trainer(object):
@@ -16,10 +16,7 @@ class Trainer(object):
         num_workers = getattr(args, 'num_workers', 0)
         self.Trainloader = data.DataLoader(dataset=TrainDataset, batch_size=args.batch_size, shuffle=True, num_workers=num_workers)
 
-        pos_weight = getattr(args, 'pos_weight', None)
-        if pos_weight:
-            pos_weight = torch.tensor([pos_weight], device=self.device)
-        self.criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        self.pos_weight = getattr(args, 'pos_weight', None)
         self.optimizer = torch.optim.Adam(lr=getattr(args, 'lr', 1e-3), params=model.parameters())
 
         self.epochs = args.epochs
@@ -46,9 +43,7 @@ class Trainer(object):
 
                 outputs = self.model(images)
 
-                loss1 = self.criterion(outputs, gts)
-                loss2 = dice_loss(outputs, gts)
-                loss = loss1 + loss2
+                loss, loss1, loss2 = total_loss(outputs, gts, pos_weight=self.pos_weight)
 
                 loss.backward()
 
